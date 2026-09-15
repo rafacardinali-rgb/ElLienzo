@@ -1,0 +1,7 @@
+{
+  "name": "el-lienzo",
+  "private": true,
+  "dependencies": {
+    "@supabase/supabase-js": "^2.116.0"
+  }
+}
