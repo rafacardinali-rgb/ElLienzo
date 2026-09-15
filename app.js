@@ -1,9 +1,12 @@
-// Lógica del lienzo: pinta la grilla, maneja el modal de compra y dispara
-// el flujo de pago. Nunca escribe directo en la tabla `blocks` — todo lo
-// que cambia estado pasa por las Cloudflare Functions (/api/...).
+// Lógica del lienzo: pinta la grilla, maneja la selección de un bloque
+// (de una o varias unidades, arrastrando) y el modal de compra. Nunca
+// escribe directo en la tabla `blocks` — todo lo que cambia estado pasa
+// por las Cloudflare Functions (/api/...).
 
-const { SUPABASE_URL, SUPABASE_ANON_KEY, SITE_NAME, GRID_SIZE, PRECIO_CENTRO_CENTS, PRECIO_BORDE_CENTS, MONEDA } =
-  window.CONFIG;
+const {
+  SUPABASE_URL, SUPABASE_ANON_KEY, SITE_NAME,
+  GRID_COLS, GRID_ROWS, PRECIO_CENTRO_CENTS, PRECIO_BORDE_CENTS, MONEDA,
+} = window.CONFIG;
 
 let sb = null;
 try {
@@ -25,36 +28,59 @@ const bannerAreaEl = document.getElementById("banner-area");
 
 document.getElementById("site-title").textContent = SITE_NAME;
 document.title = SITE_NAME;
+gridEl.style.setProperty("--cols", GRID_COLS);
+gridEl.style.setProperty("--rows", GRID_ROWS);
 
 function formatPrecio(cents) {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: MONEDA }).format(cents / 100);
 }
 
-// Precio por posición: el centro de la grilla es el más caro (el punto que
-// más se ve de la página) y baja gradualmente hacia los bordes/esquinas.
-// ESTA FÓRMULA TIENE QUE COINCIDIR EXACTO con precioBloque() en
+// Precio de UNA unidad de grilla según su posición — el centro es el más
+// caro (el punto que más se ve de la página) y baja hacia los bordes.
+// ESTA FÓRMULA TIENE QUE COINCIDIR EXACTO con precioUnidad() en
 // functions/_shared.js — una muestra el precio, la otra es la que cobra.
-function precioBloque(row_idx, col_idx) {
-  const centro = (GRID_SIZE - 1) / 2;
-  const maxDist = Math.sqrt(2) * centro;
-  const dist = Math.sqrt((row_idx - centro) ** 2 + (col_idx - centro) ** 2);
+function precioUnidad(col, row) {
+  const centroX = (GRID_COLS - 1) / 2;
+  const centroY = (GRID_ROWS - 1) / 2;
+  const maxDist = Math.sqrt(centroX ** 2 + centroY ** 2);
+  const dist = Math.sqrt((col - centroX) ** 2 + (row - centroY) ** 2);
   const t = maxDist === 0 ? 1 : 1 - dist / maxDist;
   const precio = PRECIO_BORDE_CENTS + (PRECIO_CENTRO_CENTS - PRECIO_BORDE_CENTS) * t;
-  return Math.round(precio / 1000) * 1000;
+  return Math.round(precio / 10) * 10;
 }
 
-// Notación tipo planilla de cálculo: columnas con letras (A, B, C...),
-// filas con números (1, 2, 3...). Ej: fila idx 1 / columna idx 1 → "B2".
-function etiquetaBloque(row_idx, col_idx) {
-  const letra = String.fromCharCode(65 + col_idx);
-  return `${letra}${row_idx + 1}`;
+function precioRegion(x, y, w, h) {
+  let total = 0;
+  for (let row = y; row < y + h; row++) {
+    for (let col = x; col < x + w; col++) {
+      total += precioUnidad(col, row);
+    }
+  }
+  return Math.round(total / 1000) * 1000;
+}
+
+// Notación tipo planilla de cálculo para columnas: A, B, ..., Z, AA, AB...
+function letraColumna(col) {
+  let n = col + 1;
+  let s = "";
+  while (n > 0) {
+    const resto = (n - 1) % 26;
+    s = String.fromCharCode(65 + resto) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+function etiquetaBloque(x, y, w = 1, h = 1) {
+  const base = `${letraColumna(x)}${y + 1}`;
+  return w > 1 || h > 1 ? `${base} (${w}×${h})` : base;
 }
 
 document.getElementById("precio-pill").textContent =
-  `Precios desde ${formatPrecio(PRECIO_BORDE_CENTS)} (bordes) hasta ${formatPrecio(PRECIO_CENTRO_CENTS)} (centro) · pago único`;
+  `Desde ${formatPrecio(PRECIO_BORDE_CENTS)} la unidad más chica · el precio depende del tamaño y la ubicación · pago único`;
 
-let blocksById = new Map();
-let selectedBlock = null;
+let bloques = []; // lista de bloques pending/sold, tal como vienen de blocks_public
+let ocupadas = new Set(); // "x,y" de cada unidad cubierta por algún bloque
 
 let loadErrorBannerEl = null;
 function showLoadError(text) {
@@ -80,73 +106,157 @@ async function fetchBlocks() {
   try {
     const { data, error } = await sb.from("blocks_public").select("*");
     if (error) throw error;
-    blocksById = new Map(data.map((b) => [`${b.row_idx}-${b.col_idx}`, b]));
+    bloques = data || [];
+    ocupadas = new Set();
+    for (const b of bloques) {
+      for (let row = b.y; row < b.y + b.h; row++) {
+        for (let col = b.x; col < b.x + b.w; col++) {
+          ocupadas.add(`${col},${row}`);
+        }
+      }
+    }
     renderGrid();
     clearLoadError();
   } catch (err) {
     console.error("Error cargando bloques:", err);
-    showLoadError("No pudimos cargar los precios. Reintentando…");
+    showLoadError("No pudimos cargar los espacios. Reintentando…");
   }
+}
+
+function celdaLibre(col, row) {
+  if (col < 0 || row < 0 || col >= GRID_COLS || row >= GRID_ROWS) return false;
+  return !ocupadas.has(`${col},${row}`);
+}
+
+function regionLibre(x, y, w, h) {
+  for (let row = y; row < y + h; row++) {
+    for (let col = x; col < x + w; col++) {
+      if (!celdaLibre(col, row)) return false;
+    }
+  }
+  return true;
 }
 
 function renderGrid() {
   gridEl.innerHTML = "";
 
-  // Esquina vacía (arriba a la izquierda).
-  gridEl.appendChild(document.createElement("div")).className = "corner";
-
-  // Encabezado de columnas: A, B, C...
-  for (let c = 0; c < GRID_SIZE; c++) {
-    const colHeader = document.createElement("div");
-    colHeader.className = "col-header";
-    colHeader.textContent = String.fromCharCode(65 + c);
-    gridEl.appendChild(colHeader);
+  // Bloques ocupados (pending/sold): un solo elemento por bloque, spanneado
+  // sobre todas las unidades que cubre.
+  for (const b of bloques) {
+    const cell = document.createElement("div");
+    cell.className = "cell " + (b.status === "sold" ? "sold" : "pending");
+    cell.style.gridColumn = `${b.x + 1} / span ${b.w}`;
+    cell.style.gridRow = `${b.y + 1} / span ${b.h}`;
+    const label = etiquetaBloque(b.x, b.y, b.w, b.h);
+    if (b.status === "sold") {
+      if (b.image_url) {
+        const img = document.createElement("img");
+        img.src = b.image_url;
+        img.alt = b.title || `Bloque ${label}`;
+        cell.appendChild(img);
+      }
+      cell.title = `${label} · ${b.title || ""}`;
+      if (b.link_url) {
+        cell.addEventListener("click", () => window.open(b.link_url, "_blank", "noopener"));
+      }
+    } else {
+      cell.textContent = b.w * b.h > 3 ? label : "";
+      cell.title = `${label} · Alguien está pagando este espacio ahora mismo`;
+    }
+    gridEl.appendChild(cell);
   }
 
-  for (let r = 0; r < GRID_SIZE; r++) {
-    // Encabezado de fila: 1, 2, 3...
-    const rowHeader = document.createElement("div");
-    rowHeader.className = "row-header";
-    rowHeader.textContent = String(r + 1);
-    gridEl.appendChild(rowHeader);
-
-    for (let c = 0; c < GRID_SIZE; c++) {
-      const block = blocksById.get(`${r}-${c}`);
+  // Unidades libres: una celda chica clickeable/arrastrable por cada una.
+  for (let row = 0; row < GRID_ROWS; row++) {
+    for (let col = 0; col < GRID_COLS; col++) {
+      if (!celdaLibre(col, row)) continue;
       const cell = document.createElement("div");
-      cell.className = "cell";
-      const label = etiquetaBloque(r, c);
-
-      if (!block || block.status === "available") {
-        cell.classList.add("available");
-        cell.textContent = "+";
-        cell.title = `${label} · Disponible · ${formatPrecio(precioBloque(r, c))}`;
-        cell.addEventListener("click", () => openModal(block ?? { row_idx: r, col_idx: c, status: "available" }));
-      } else if (block.status === "pending") {
-        cell.classList.add("pending");
-        cell.textContent = label;
-        cell.title = `${label} · Alguien está pagando este bloque ahora mismo`;
-      } else if (block.status === "sold") {
-        cell.classList.add("sold");
-        if (block.image_url) {
-          const img = document.createElement("img");
-          img.src = block.image_url;
-          img.alt = block.title || `Bloque ${label}`;
-          cell.appendChild(img);
-        }
-        cell.title = `${label} · ${block.title || ""}`;
-        if (block.link_url) {
-          cell.addEventListener("click", () => window.open(block.link_url, "_blank", "noopener"));
-        }
-      }
+      cell.className = "cell available";
+      cell.style.gridColumn = String(col + 1);
+      cell.style.gridRow = String(row + 1);
+      cell.dataset.col = String(col);
+      cell.dataset.row = String(row);
+      cell.title = `${etiquetaBloque(col, row)} · Disponible · ${formatPrecio(precioUnidad(col, row))}`;
       gridEl.appendChild(cell);
     }
   }
 }
 
-function openModal(block) {
-  selectedBlock = block;
-  const label = etiquetaBloque(block.row_idx, block.col_idx);
-  const precio = precioBloque(block.row_idx, block.col_idx);
+// --- Selección de un rectángulo arrastrando (funciona con mouse y con
+// dedo, gracias a Pointer Events) ---
+let seleccionando = false;
+let inicio = null; // {col, row}
+let selEl = null;
+
+function coordenadasDesdeEvento(e) {
+  const rect = gridEl.getBoundingClientRect();
+  const cellW = rect.width / GRID_COLS;
+  const cellH = rect.height / GRID_ROWS;
+  const col = Math.min(GRID_COLS - 1, Math.max(0, Math.floor((e.clientX - rect.left) / cellW)));
+  const row = Math.min(GRID_ROWS - 1, Math.max(0, Math.floor((e.clientY - rect.top) / cellH)));
+  return { col, row };
+}
+
+function actualizarSeleccion(actual) {
+  const x = Math.min(inicio.col, actual.col);
+  const y = Math.min(inicio.row, actual.row);
+  const w = Math.abs(actual.col - inicio.col) + 1;
+  const h = Math.abs(actual.row - inicio.row) + 1;
+  const valida = regionLibre(x, y, w, h);
+
+  if (!selEl) {
+    selEl = document.createElement("div");
+    selEl.className = "cell selection";
+    gridEl.appendChild(selEl);
+  }
+  selEl.classList.toggle("invalida", !valida);
+  selEl.style.gridColumn = `${x + 1} / span ${w}`;
+  selEl.style.gridRow = `${y + 1} / span ${h}`;
+  selEl.textContent = w * h > 1 ? `${etiquetaBloque(x, y, w, h)}` : "";
+  return { x, y, w, h, valida };
+}
+
+function terminarSeleccion() {
+  seleccionando = false;
+  inicio = null;
+  if (selEl) {
+    selEl.remove();
+    selEl = null;
+  }
+}
+
+gridEl.addEventListener("pointerdown", (e) => {
+  const target = e.target.closest(".cell.available");
+  if (!target) return;
+  e.preventDefault();
+  gridEl.setPointerCapture(e.pointerId);
+  seleccionando = true;
+  inicio = { col: Number(target.dataset.col), row: Number(target.dataset.row) };
+  actualizarSeleccion(inicio);
+});
+
+gridEl.addEventListener("pointermove", (e) => {
+  if (!seleccionando) return;
+  actualizarSeleccion(coordenadasDesdeEvento(e));
+});
+
+gridEl.addEventListener("pointerup", (e) => {
+  if (!seleccionando) return;
+  const resultado = actualizarSeleccion(coordenadasDesdeEvento(e));
+  terminarSeleccion();
+  if (resultado.valida) {
+    openModal(resultado);
+  }
+});
+
+gridEl.addEventListener("pointercancel", terminarSeleccion);
+
+let selectedRegion = null;
+
+function openModal(region) {
+  selectedRegion = region;
+  const label = etiquetaBloque(region.x, region.y, region.w, region.h);
+  const precio = precioRegion(region.x, region.y, region.w, region.h);
   modalCoordsEl.textContent = label;
   modalPrecioEl.textContent = `Precio: ${formatPrecio(precio)} — pago único. Vas a recibir un comprobante que te acredita como dueño del bloque.`;
   formMsgEl.textContent = "";
@@ -157,7 +267,7 @@ function openModal(block) {
 
 function closeModal() {
   overlayEl.classList.remove("open");
-  selectedBlock = null;
+  selectedRegion = null;
 }
 
 btnCancelar.addEventListener("click", closeModal);
@@ -167,7 +277,7 @@ overlayEl.addEventListener("click", (e) => {
 
 formEl.addEventListener("submit", async (e) => {
   e.preventDefault();
-  if (!selectedBlock) return;
+  if (!selectedRegion) return;
 
   const title = document.getElementById("title").value.trim();
   const link_url = document.getElementById("link_url").value.trim();
@@ -183,8 +293,9 @@ formEl.addEventListener("submit", async (e) => {
   showFormMsg("Subiendo imagen…");
 
   try {
+    const { x, y, w, h } = selectedRegion;
     const ext = file.name.split(".").pop();
-    const path = `${selectedBlock.row_idx}-${selectedBlock.col_idx}-${Date.now()}.${ext}`;
+    const path = `${x}-${y}-${w}x${h}-${Date.now()}.${ext}`;
     const { error: uploadError } = await sb.storage
       .from("bloques-imagenes")
       .upload(path, file, { upsert: false });
@@ -199,14 +310,7 @@ formEl.addEventListener("submit", async (e) => {
     const res = await fetch("/api/crear-preferencia", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        row_idx: selectedBlock.row_idx,
-        col_idx: selectedBlock.col_idx,
-        title,
-        link_url,
-        image_url,
-        buyer_email: email,
-      }),
+      body: JSON.stringify({ x, y, w, h, title, link_url, image_url, buyer_email: email }),
     });
 
     const data = await res.json();
@@ -217,6 +321,9 @@ formEl.addEventListener("submit", async (e) => {
     console.error(err);
     showFormError(err.message || "Algo salió mal. Probá de nuevo.");
     btnPagar.disabled = false;
+    // Alguien pudo habernos ganado de mano el espacio mientras subíamos la
+    // imagen — refrescamos para que la grilla se vea al día.
+    fetchBlocks();
   }
 });
 
@@ -230,17 +337,16 @@ function showFormError(text) {
 }
 
 // Mensaje según el resultado del pago (Mercado Pago redirige acá con
-// ?pago=&r=&c=&t=). Si vino con token, ofrecemos el link directo al
+// ?pago=&id=&t=). Si vino con token, ofrecemos el link directo al
 // comprobante de propiedad del bloque.
 function checkPaymentRedirect() {
   const params = new URLSearchParams(window.location.search);
   const pago = params.get("pago");
   if (!pago) return;
 
-  const r = params.get("r");
-  const c = params.get("c");
+  const id = params.get("id");
   const t = params.get("t");
-  const linkComprobante = r !== null && c !== null && t ? `certificado.html?r=${r}&c=${c}&t=${t}` : null;
+  const linkComprobante = id && t ? `certificado.html?id=${id}&t=${t}` : null;
 
   const banner = document.createElement("div");
   banner.className = "banner";
@@ -255,7 +361,7 @@ function checkPaymentRedirect() {
     banner.textContent = "Tu pago está pendiente de confirmación. Te va a llegar un email cuando se acredite, con tu comprobante de propiedad.";
   } else {
     banner.className = "banner error";
-    banner.textContent = "El pago no se completó. El bloque sigue disponible, podés intentar de nuevo.";
+    banner.textContent = "El pago no se completó. El espacio sigue disponible, podés intentar de nuevo.";
   }
   bannerAreaEl.appendChild(banner);
 

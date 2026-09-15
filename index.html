@@ -76,35 +76,27 @@
     flex: 1 1 auto;
     min-height: 0;
     display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 6px 12px;
+    align-items: stretch;
+    justify-content: stretch;
+    padding: 4px;
   }
   #grid {
     display: grid;
-    grid-template-columns: 26px repeat(10, 1fr);
-    grid-template-rows: 26px repeat(10, 1fr);
-    gap: 3px;
+    grid-template-columns: repeat(var(--cols), 1fr);
+    grid-template-rows: repeat(var(--rows), 1fr);
+    gap: 2px;
     background: transparent;
-    padding: 4px;
+    padding: 2px;
     border-radius: 10px;
-    width: min(94vw, calc(100vh - 200px));
-    aspect-ratio: 1 / 1;
-  }
-  .corner, .col-header, .row-header {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--accent);
-    opacity: .75;
-    font-size: 12px;
-    font-weight: 600;
+    width: 100%;
+    height: 100%;
+    touch-action: none; /* para poder arrastrar y elegir un bloque en el celular sin que la página haga scroll */
     user-select: none;
   }
   .cell {
     background: var(--available);
     border: 1px solid rgba(255,255,255,.07);
-    border-radius: 4px;
+    border-radius: 3px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -114,13 +106,32 @@
     overflow: hidden;
     position: relative;
     backdrop-filter: blur(.5px);
-    transition: background .12s ease, transform .12s ease;
+    transition: background .12s ease;
   }
-  .cell:hover { background: var(--available-hover); transform: scale(1.04); z-index: 1; }
-  .cell.pending { background: var(--pending); border-color: rgba(201,169,97,.5); cursor: not-allowed; color: #e9d9a8; font-size: 9px; text-align: center; }
+  .cell:hover { background: var(--available-hover); }
+  .cell.pending, .cell.sold, .cell.selection {
+    border-radius: 4px;
+  }
+  .cell.pending { background: var(--pending); border-color: rgba(201,169,97,.5); cursor: not-allowed; color: #e9d9a8; font-size: 10px; text-align: center; }
   .cell.sold { cursor: pointer; border-color: rgba(255,255,255,.12); }
   .cell.sold img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .cell.sold:hover { transform: scale(1.04); z-index: 1; }
+  .cell.selection {
+    background: rgba(201,169,97,.35);
+    border: 2px solid var(--accent);
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-ink);
+    text-align: center;
+    padding: 4px;
+  }
+  .cell.selection.invalida {
+    background: rgba(229,72,77,.35);
+    border-color: var(--danger);
+  }
 
   footer {
     flex-shrink: 0;
@@ -299,7 +310,7 @@
 
 <header>
   <h1 id="site-title">El Lienzo</h1>
-  <p>100 espacios disponibles. Comprá el tuyo, subí tu imagen y tu link — es tuyo para siempre y lo podés vender o transferir cuando quieras.</p>
+  <p>Espacios de distinto tamaño sobre un mismo lienzo. Arrastrá para elegir el tuyo, subí tu imagen y tu link — es tuyo para siempre y lo podés vender o transferir cuando quieras.</p>
   <div class="precio-pill" id="precio-pill">Cargando precios…</div>
 </header>
 

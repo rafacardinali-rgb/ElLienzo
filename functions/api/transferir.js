@@ -13,12 +13,9 @@ export async function onRequestPost({ request, env }) {
     return json({ error: "JSON inválido." }, 400);
   }
 
-  const { row_idx, col_idx, manage_token, new_email, new_title, new_link_url } = body ?? {};
+  const { id, manage_token, new_email, new_title, new_link_url } = body ?? {};
 
-  if (
-    !Number.isInteger(row_idx) || !Number.isInteger(col_idx) ||
-    row_idx < 0 || row_idx > 9 || col_idx < 0 || col_idx > 9 || !manage_token
-  ) {
+  if (typeof id !== "string" || !id || !manage_token) {
     return json({ error: "Faltan datos del comprobante." }, 400);
   }
   if (!new_email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(new_email)) {
@@ -36,8 +33,7 @@ export async function onRequestPost({ request, env }) {
   const { data: block, error: fetchError } = await supabase
     .from("blocks")
     .select("*")
-    .eq("row_idx", row_idx)
-    .eq("col_idx", col_idx)
+    .eq("id", id)
     .single();
 
   if (fetchError || !block || block.status !== "sold" || block.manage_token !== manage_token) {
@@ -67,7 +63,7 @@ export async function onRequestPost({ request, env }) {
     return json({ error: "No se pudo completar la transferencia. Probá de nuevo." }, 409);
   }
 
-  const label = etiquetaBloque(row_idx, col_idx);
+  const label = etiquetaBloque(block.x, block.y, block.w, block.h);
 
   if (env.RESEND_API_KEY && env.ADMIN_EMAIL) {
     await fetch("https://api.resend.com/emails", {

@@ -1,9 +1,12 @@
 import {
   getServiceClient,
   json,
-  precioBloque,
+  precioRegion,
   etiquetaBloque,
+  seSolapan,
   liberarPendientesVencidos,
+  GRID_COLS,
+  GRID_ROWS,
 } from "../_shared.js";
 
 export async function onRequestPost({ request, env }) {
@@ -14,12 +17,12 @@ export async function onRequestPost({ request, env }) {
     return json({ error: "JSON inválido." }, 400);
   }
 
-  const { row_idx, col_idx, title, link_url, image_url, buyer_email } = body ?? {};
+  const { x, y, w, h, title, link_url, image_url, buyer_email } = body ?? {};
 
   // --- Validaciones básicas del lado del servidor ---
   if (
-    !Number.isInteger(row_idx) || !Number.isInteger(col_idx) ||
-    row_idx < 0 || row_idx > 9 || col_idx < 0 || col_idx > 9
+    !Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(w) || !Number.isInteger(h) ||
+    x < 0 || y < 0 || w < 1 || h < 1 || x + w > GRID_COLS || y + h > GRID_ROWS
   ) {
     return json({ error: "Coordenadas de bloque inválidas." }, 400);
   }
@@ -41,16 +44,29 @@ export async function onRequestPost({ request, env }) {
   // Limpieza de reservas vencidas antes de intentar tomar una nueva.
   await liberarPendientesVencidos(supabase);
 
-  const precio = precioBloque(row_idx, col_idx);
-  const label = etiquetaBloque(row_idx, col_idx);
+  // Chequeo optimista de solapamiento (además del constraint de la base,
+  // que es el que de verdad evita una doble venta si dos personas
+  // reservan al mismo tiempo).
+  const { data: existentes } = await supabase
+    .from("blocks")
+    .select("x,y,w,h")
+    .in("status", ["pending", "sold"]);
+
+  const nueva = { x, y, w, h };
+  if ((existentes || []).some((b) => seSolapan(b, nueva))) {
+    return json({ error: "Ese espacio ya no está disponible. Elegí otro." }, 409);
+  }
+
+  const precio = precioRegion(x, y, w, h);
+  const label = etiquetaBloque(x, y, w, h);
   // Token secreto de gestión: funciona como comprobante de propiedad del
   // bloque (se manda por link/email) y habilita transferirlo más adelante.
   const manageToken = crypto.randomUUID();
 
-  // Reserva atómica: solo pasa a 'pending' si seguía 'available'.
-  const { data: updated, error: updateError } = await supabase
+  const { data: creado, error: insertError } = await supabase
     .from("blocks")
-    .update({
+    .insert({
+      x, y, w, h,
       status: "pending",
       title: title.trim(),
       link_url,
@@ -61,20 +77,19 @@ export async function onRequestPost({ request, env }) {
       manage_token: manageToken,
       reserved_at: new Date().toISOString(),
     })
-    .eq("row_idx", row_idx)
-    .eq("col_idx", col_idx)
-    .eq("status", "available")
     .select()
     .single();
 
-  if (updateError || !updated) {
-    return json({ error: "Ese bloque ya no está disponible. Elegí otro." }, 409);
+  if (insertError || !creado) {
+    // El constraint de exclusión de la base (blocks_no_overlap) devuelve
+    // un error acá si otra persona reservó el mismo espacio justo antes.
+    return json({ error: "Ese espacio ya no está disponible. Elegí otro." }, 409);
   }
 
   // --- Crear preferencia de pago en Mercado Pago ---
   const siteUrl = env.SITE_URL.replace(/\/$/, "");
   const volverConToken = (estado) =>
-    `${siteUrl}/?pago=${estado}&r=${row_idx}&c=${col_idx}&t=${manageToken}`;
+    `${siteUrl}/?pago=${estado}&id=${creado.id}&t=${manageToken}`;
 
   const mpRes = await fetch("https://api.mercadopago.com/checkout/preferences", {
     method: "POST",
@@ -92,8 +107,8 @@ export async function onRequestPost({ request, env }) {
         },
       ],
       payer: { email: buyer_email },
-      external_reference: updated.id,
-      metadata: { block_id: updated.id },
+      external_reference: creado.id,
+      metadata: { block_id: creado.id },
       notification_url: `${siteUrl}/api/webhook-mp`,
       back_urls: {
         success: volverConToken("success"),
@@ -107,14 +122,8 @@ export async function onRequestPost({ request, env }) {
   if (!mpRes.ok) {
     const detalle = await mpRes.text();
     console.error("Error creando preferencia MP:", detalle);
-    // Revertimos la reserva para no dejar el bloque trabado.
-    await supabase
-      .from("blocks")
-      .update({
-        status: "available", title: null, link_url: null, image_url: null,
-        buyer_email: null, price_cents: null, manage_token: null, reserved_at: null,
-      })
-      .eq("id", updated.id);
+    // Revertimos la reserva para no dejar el espacio trabado.
+    await supabase.from("blocks").delete().eq("id", creado.id);
     return json({ error: "No se pudo iniciar el pago. Probá de nuevo en un momento." }, 502);
   }
 
@@ -123,7 +132,7 @@ export async function onRequestPost({ request, env }) {
   await supabase
     .from("blocks")
     .update({ mp_preference_id: preference.id })
-    .eq("id", updated.id);
+    .eq("id", creado.id);
 
   return json({ init_point: preference.init_point });
 }

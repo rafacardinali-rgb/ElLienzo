@@ -86,14 +86,11 @@
 
 <script>
 const params = new URLSearchParams(window.location.search);
-let r = params.get("r");
-let c = params.get("c");
+let idBloque = params.get("id");
 let t = params.get("t");
 
 const contenidoEl = document.getElementById("contenido");
 
-function letra(colIdx) { return String.fromCharCode(65 + Number(colIdx)); }
-function etiqueta(rowIdx, colIdx) { return `${letra(colIdx)}${Number(rowIdx) + 1}`; }
 function formatPrecio(cents, currency) {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: currency || "ARS" }).format(cents / 100);
 }
@@ -112,7 +109,7 @@ function renderLookupForm(mensaje) {
   card.innerHTML = `
     <p class="sub" style="margin-top:0">Pegá acá el link completo de tu comprobante (el que te llegó por email o viste después de pagar).</p>
     <label for="lookup-url">Link del comprobante</label>
-    <input type="text" id="lookup-url" placeholder="https://.../certificado.html?r=..&c=..&t=.." />
+    <input type="text" id="lookup-url" placeholder="https://.../certificado.html?id=..&t=.." />
     <button class="btn-primary" id="lookup-btn">Ver comprobante</button>
   `;
   contenidoEl.appendChild(card);
@@ -120,9 +117,9 @@ function renderLookupForm(mensaje) {
     const val = document.getElementById("lookup-url").value.trim();
     try {
       const u = new URL(val, window.location.href);
-      const nr = u.searchParams.get("r"), nc = u.searchParams.get("c"), nt = u.searchParams.get("t");
-      if (nr === null || nc === null || !nt) throw new Error("incompleto");
-      window.location.href = `certificado.html?r=${nr}&c=${nc}&t=${nt}`;
+      const nid = u.searchParams.get("id"), nt = u.searchParams.get("t");
+      if (!nid || !nt) throw new Error("incompleto");
+      window.location.href = `certificado.html?id=${nid}&t=${nt}`;
     } catch {
       renderLookupForm("Ese link no parece un comprobante válido.");
     }
@@ -130,7 +127,7 @@ function renderLookupForm(mensaje) {
 }
 
 async function cargar() {
-  if (r === null || c === null || !t) {
+  if (!idBloque || !t) {
     renderLookupForm();
     return;
   }
@@ -138,7 +135,7 @@ async function cargar() {
   contenidoEl.innerHTML = `<p class="sub">Cargando…</p>`;
 
   try {
-    const res = await fetch(`/api/certificado?r=${encodeURIComponent(r)}&c=${encodeURIComponent(c)}&t=${encodeURIComponent(t)}`);
+    const res = await fetch(`/api/certificado?id=${encodeURIComponent(idBloque)}&t=${encodeURIComponent(t)}`);
     const data = await res.json();
     if (!res.ok) {
       renderLookupForm(data.error || "No se pudo cargar el comprobante.");
@@ -206,8 +203,7 @@ function renderCertificado(block) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          row_idx: Number(r),
-          col_idx: Number(c),
+          id: idBloque,
           manage_token: t,
           new_email: document.getElementById("new_email").value.trim(),
           new_title: document.getElementById("new_title").value.trim(),
@@ -226,7 +222,7 @@ function renderCertificado(block) {
       // con el token nuevo para que quien mira esta pantalla vea el estado
       // actualizado del bloque ya a nombre del nuevo dueño.
       t = data.manage_token;
-      window.history.replaceState({}, "", `certificado.html?r=${r}&c=${c}&t=${t}`);
+      window.history.replaceState({}, "", `certificado.html?id=${idBloque}&t=${t}`);
       setTimeout(cargar, 1200);
     } catch (err) {
       msgEl.className = "msg error";

@@ -61,16 +61,8 @@ export async function onRequestPost({ request, env }) {
       await enviarEmails(env, block);
     }
   } else if (["rejected", "cancelled"].includes(payment.status)) {
-    await supabase
-      .from("blocks")
-      .update({
-        status: "available",
-        title: null, link_url: null, image_url: null,
-        buyer_email: null, price_cents: null, manage_token: null, reserved_at: null,
-        mp_preference_id: null,
-      })
-      .eq("id", blockId)
-      .eq("status", "pending");
+    // Como "disponible" ahora es la ausencia de fila, cancelar = borrarla.
+    await supabase.from("blocks").delete().eq("id", blockId).eq("status", "pending");
   }
   // Si está "pending" o "in_process" del lado de MP, no tocamos nada:
   // la limpieza de reservas vencidas en _shared.js se encarga si nunca se paga.
@@ -88,9 +80,9 @@ async function enviarEmails(env, block) {
   };
 
   const siteUrl = (env.SITE_URL || "").replace(/\/$/, "");
-  const label = etiquetaBloque(block.row_idx, block.col_idx);
+  const label = etiquetaBloque(block.x, block.y, block.w, block.h);
   const linkComprobante = block.manage_token
-    ? `${siteUrl}/certificado.html?r=${block.row_idx}&c=${block.col_idx}&t=${block.manage_token}`
+    ? `${siteUrl}/certificado.html?id=${block.id}&t=${block.manage_token}`
     : null;
 
   // Confirmación al comprador

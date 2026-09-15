@@ -5,23 +5,18 @@ import { getServiceClient, json, etiquetaBloque } from "../_shared.js";
 // muestra después de pagar) — sin el token correcto no se puede ver nada.
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
-  const row_idx = Number(url.searchParams.get("r"));
-  const col_idx = Number(url.searchParams.get("c"));
+  const id = url.searchParams.get("id");
   const token = url.searchParams.get("t");
 
-  if (
-    !Number.isInteger(row_idx) || !Number.isInteger(col_idx) ||
-    row_idx < 0 || row_idx > 9 || col_idx < 0 || col_idx > 9 || !token
-  ) {
+  if (!id || !token) {
     return json({ error: "Faltan datos del comprobante." }, 400);
   }
 
   const supabase = getServiceClient(env);
   const { data: block, error } = await supabase
     .from("blocks")
-    .select("row_idx,col_idx,status,title,link_url,image_url,buyer_email,price_cents,currency,sold_at,manage_token")
-    .eq("row_idx", row_idx)
-    .eq("col_idx", col_idx)
+    .select("id,x,y,w,h,status,title,link_url,image_url,buyer_email,price_cents,currency,sold_at,manage_token")
+    .eq("id", id)
     .single();
 
   if (error || !block || !block.manage_token || block.manage_token !== token) {
@@ -32,9 +27,12 @@ export async function onRequestGet({ request, env }) {
   }
 
   return json({
-    label: etiquetaBloque(block.row_idx, block.col_idx),
-    row_idx: block.row_idx,
-    col_idx: block.col_idx,
+    id: block.id,
+    label: etiquetaBloque(block.x, block.y, block.w, block.h),
+    x: block.x,
+    y: block.y,
+    w: block.w,
+    h: block.h,
     title: block.title,
     link_url: block.link_url,
     image_url: block.image_url,
