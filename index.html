@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>El Lienzo — espacio publicitario por bloques</title>
+<style>
+  :root {
+    --bg: #08090b;
+    --panel: #15151a;
+    --border: #2a2a33;
+    --text: #ece7dc;
+    --muted: #9a9488;
+    --accent: #c9a961;
+    --accent-ink: #17130a;
+    --available: rgba(255,255,255,.035);
+    --available-hover: rgba(255,255,255,.09);
+    --pending: rgba(201,169,97,.28);
+    --danger: #e5484d;
+    --ok: #4ade80;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    position: relative;
+  }
+
+  /* Fondo: reloj de alta gama genérico (sin marca) — esfera, bisel, agujas.
+     Se ve de fondo detrás de los bloques todavía disponibles; a medida que
+     se venden, cada bloque lo va tapando con la imagen del dueño. */
+  #watch-bg {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    width: min(92vmin, 880px);
+    height: min(92vmin, 880px);
+    z-index: 0;
+    pointer-events: none;
+    opacity: .92;
+  }
+
+  header, main, footer, #banner-area, .overlay { position: relative; z-index: 1; }
+
+  header {
+    padding: 16px 20px 6px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  header h1 {
+    margin: 0 0 6px;
+    font-size: 24px;
+    font-family: Georgia, "Times New Roman", serif;
+    letter-spacing: .06em;
+    color: var(--text);
+  }
+  header p { margin: 0; color: var(--muted); font-size: 13px; max-width: 620px; margin: 0 auto; }
+  .precio-pill {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 5px 14px;
+    border-radius: 999px;
+    background: rgba(21,21,26,.7);
+    backdrop-filter: blur(2px);
+    border: 1px solid rgba(201,169,97,.35);
+    font-size: 13px;
+    color: var(--muted);
+  }
+  main {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 12px;
+  }
+  #grid {
+    display: grid;
+    grid-template-columns: 26px repeat(10, 1fr);
+    grid-template-rows: 26px repeat(10, 1fr);
+    gap: 3px;
+    background: transparent;
+    padding: 4px;
+    border-radius: 10px;
+    width: min(94vw, calc(100vh - 200px));
+    aspect-ratio: 1 / 1;
+  }
+  .corner, .col-header, .row-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    opacity: .75;
+    font-size: 12px;
+    font-weight: 600;
+    user-select: none;
+  }
+  .cell {
+    background: var(--available);
+    border: 1px solid rgba(255,255,255,.07);
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 14px;
+    overflow: hidden;
+    position: relative;
+    backdrop-filter: blur(.5px);
+    transition: background .12s ease, transform .12s ease;
+  }
+  .cell:hover { background: var(--available-hover); transform: scale(1.04); z-index: 1; }
+  .cell.pending { background: var(--pending); border-color: rgba(201,169,97,.5); cursor: not-allowed; color: #e9d9a8; font-size: 9px; text-align: center; }
+  .cell.sold { cursor: pointer; border-color: rgba(255,255,255,.12); }
+  .cell.sold img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cell.sold:hover { transform: scale(1.04); z-index: 1; }
+
+  footer {
+    flex-shrink: 0;
+    text-align: center;
+    padding: 8px 20px 14px;
+    color: var(--muted);
+    font-size: 12px;
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  footer a { color: var(--accent); }
+
+  .banner {
+    max-width: 640px;
+    margin: 0 auto 8px;
+    padding: 12px 16px;
+    border-radius: 10px;
+    background: rgba(21,21,26,.9);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .banner a { color: var(--accent); font-weight: 600; }
+  .banner.error { border-color: var(--danger); color: var(--danger); }
+
+  /* Modal */
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 10;
+  }
+  .overlay.open { display: flex; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    width: 100%;
+    max-width: 420px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .modal h2 { margin: 0 0 4px; font-size: 18px; }
+  .modal .sub { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .field input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #0f1115;
+    color: var(--text);
+    font-size: 14px;
+  }
+  .modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+  button {
+    font: inherit;
+    border: none;
+    border-radius: 8px;
+    padding: 11px 16px;
+    cursor: pointer;
+  }
+  .btn-primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; flex: 1; }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-secondary { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .msg { font-size: 13px; margin-top: 10px; min-height: 16px; }
+  .msg.error { color: var(--danger); }
+  .msg.ok { color: var(--ok); }
+</style>
+</head>
+<body>
+
+<!-- Fondo decorativo: reloj de alta gama genérico, sin logos ni marcas —
+     bisel, esfera, índices y agujas dibujados en SVG. -->
+<svg id="watch-bg" viewBox="0 0 300 300" aria-hidden="true">
+  <defs>
+    <radialGradient id="dialGrad" cx="35%" cy="28%" r="80%">
+      <stop offset="0%" stop-color="#2f8a58"/>
+      <stop offset="45%" stop-color="#0e5536"/>
+      <stop offset="100%" stop-color="#03170f"/>
+    </radialGradient>
+    <linearGradient id="bezelGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4a4a53"/>
+      <stop offset="45%" stop-color="#c9a961"/>
+      <stop offset="55%" stop-color="#8a7133"/>
+      <stop offset="100%" stop-color="#2b2b30"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="150" cy="150" r="148" fill="url(#bezelGrad)" />
+
+  <!-- bisel facetado/estriado (textura genérica, no un modelo particular) -->
+  <g id="bezel-flutes" opacity=".9"></g>
+
+  <circle cx="150" cy="150" r="131" fill="none" stroke="#e7e2d4" stroke-width="1.5" opacity=".5" />
+  <circle cx="150" cy="150" r="129" fill="url(#dialGrad)" stroke="#000" stroke-width="1" />
+
+  <!-- textura sutil del cuadrante: anillos concéntricos casi imperceptibles -->
+  <g fill="none" stroke="#ffffff" stroke-opacity=".05">
+    <circle cx="150" cy="150" r="116"/>
+    <circle cx="150" cy="150" r="101"/>
+    <circle cx="150" cy="150" r="86"/>
+    <circle cx="150" cy="150" r="71"/>
+    <circle cx="150" cy="150" r="56"/>
+    <circle cx="150" cy="150" r="41"/>
+  </g>
+
+  <!-- índices de hora (12 bastones) -->
+  <g id="hour-markers" fill="#e6dcc4" opacity=".9"></g>
+
+  <!-- agujas, detenidas en una posición clásica y prolija. Color sólido a
+       propósito: un stroke con gradiente objectBoundingBox no se renderiza
+       en una línea perfectamente vertical (bounding box de ancho 0). -->
+  <g stroke-linecap="round">
+    <line x1="150" y1="150" x2="150" y2="85" stroke="#e9d9a8" stroke-width="5"
+          transform="rotate(-60 150 150)" />
+    <line x1="150" y1="150" x2="150" y2="55" stroke="#e9d9a8" stroke-width="3.4"
+          transform="rotate(60 150 150)" />
+    <line x1="150" y1="150" x2="150" y2="50" stroke="#b23b3b" stroke-width="1.2"
+          transform="rotate(178 150 150)" />
+  </g>
+  <circle cx="150" cy="150" r="5" fill="#e9d9a8" stroke="#1a1a1a" stroke-width="1" />
+
+  <script><![CDATA[
+    (function () {
+      const svgNs = "http://www.w3.org/2000/svg";
+
+      // Bisel estriado: muchas facetas finas alrededor de todo el anillo,
+      // alternando dos tonos de dorado para simular relieve metálico.
+      // Es una textura genérica (estría/coin-edge), no la reproducción de
+      // ningún bisel de marca en particular.
+      const flutesG = document.getElementById("bezel-flutes");
+      const NUM_FLUTES = 100;
+      for (let i = 0; i < NUM_FLUTES; i++) {
+        const angle = (i * (360 / NUM_FLUTES)) * Math.PI / 180;
+        const rOuter = 147, rInner = 133;
+        const x1 = 150 + rOuter * Math.sin(angle);
+        const y1 = 150 - rOuter * Math.cos(angle);
+        const x2 = 150 + rInner * Math.sin(angle);
+        const y2 = 150 - rInner * Math.cos(angle);
+        const line = document.createElementNS(svgNs, "line");
+        line.setAttribute("x1", x1); line.setAttribute("y1", y1);
+        line.setAttribute("x2", x2); line.setAttribute("y2", y2);
+        line.setAttribute("stroke", i % 2 === 0 ? "#efe0ad" : "#7a5f28");
+        line.setAttribute("stroke-width", "2.6");
+        flutesG.appendChild(line);
+      }
+      const markersG = document.getElementById("hour-markers");
+      for (let i = 0; i < 12; i++) {
+        const angle = (i * 30) * Math.PI / 180;
+        const r = 112;
+        const cx = 150 + r * Math.sin(angle);
+        const cy = 150 - r * Math.cos(angle);
+        const rect = document.createElementNS(svgNs, "rect");
+        const w = i % 3 === 0 ? 5 : 3.4;
+        const h = i % 3 === 0 ? 16 : 12;
+        rect.setAttribute("x", cx - w / 2);
+        rect.setAttribute("y", cy - h / 2);
+        rect.setAttribute("width", w);
+        rect.setAttribute("height", h);
+        rect.setAttribute("rx", 1);
+        rect.setAttribute("transform", `rotate(${i * 30} ${cx} ${cy})`);
+        markersG.appendChild(rect);
+      }
+    })();
+  ]]></script>
+</svg>
+
+<header>
+  <h1 id="site-title">El Lienzo</h1>
+  <p>100 espacios disponibles. Comprá el tuyo, subí tu imagen y tu link — es tuyo para siempre y lo podés vender o transferir cuando quieras.</p>
+  <div class="precio-pill" id="precio-pill">Cargando precios…</div>
+</header>
+
+<div id="banner-area"></div>
+
+<main>
+  <div id="grid"></div>
+</main>
+
+<!-- Modal de compra -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h2>Reservar bloque <span id="modal-coords"></span></h2>
+    <p class="sub" id="modal-precio"></p>
+
+    <form id="form-compra">
+      <div class="field">
+        <label for="title">Título / texto alternativo</label>
+        <input type="text" id="title" maxlength="60" required placeholder="Ej: Ferretería Don José" />
+      </div>
+      <div class="field">
+        <label for="link_url">Link de destino</label>
+        <input type="url" id="link_url" required placeholder="https://tu-sitio.com" />
+      </div>
+      <div class="field">
+        <label for="email">Tu email (para la confirmación y tu comprobante de propiedad)</label>
+        <input type="email" id="email" required placeholder="vos@ejemplo.com" />
+      </div>
+      <div class="field">
+        <label for="image">Imagen (PNG/JPG/WEBP, máx 2MB)</label>
+        <input type="file" id="image" accept="image/png,image/jpeg,image/webp" required />
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="btn-cancelar">Cancelar</button>
+        <button type="submit" class="btn-primary" id="btn-pagar">Ir a pagar</button>
+      </div>
+      <div class="msg" id="form-msg"></div>
+    </form>
+  </div>
+</div>
+
+<footer>
+  Cada bloque tiene un dueño. El comprobante que recibís al comprar prueba que es tuyo y te sirve
+  para venderlo o transferirlo a quien quieras cuando quieras — <a href="certificado.html">ver / gestionar un comprobante</a>.
+</footer>
+
+<script src="config.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

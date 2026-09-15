@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Comprobante de propiedad — El Lienzo</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e8e9ec;
+    --muted: #9aa0ac;
+    --accent: #5b9dff;
+    --accent-ink: #06101f;
+    --danger: #e5484d;
+    --ok: #4ade80;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 32px 16px;
+  }
+  .wrap { width: 100%; max-width: 480px; }
+  a.back { color: var(--muted); font-size: 13px; text-decoration: none; }
+  h1 { font-size: 20px; margin: 16px 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card img { width: 100%; border-radius: 8px; margin-bottom: 14px; display: block; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 14px; border-bottom: 1px solid var(--border); }
+  .row:last-child { border-bottom: none; }
+  .row .k { color: var(--muted); }
+  .row .v { text-align: right; word-break: break-word; }
+  .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; background:#0f1115; border:1px solid var(--border); color: var(--muted); margin-top: 8px; }
+
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .field input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #0f1115;
+    color: var(--text);
+    font-size: 14px;
+  }
+  button {
+    font: inherit;
+    border: none;
+    border-radius: 8px;
+    padding: 11px 16px;
+    cursor: pointer;
+    width: 100%;
+  }
+  .btn-primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+  .msg { font-size: 13px; margin-top: 10px; min-height: 16px; }
+  .msg.error { color: var(--danger); }
+  .msg.ok { color: var(--ok); }
+
+  .lookup input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: #0f1115; color: var(--text); font-size: 13px; margin-bottom: 8px; }
+  .lookup label { font-size: 12px; color: var(--muted); display:block; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="index.html">← Volver a El Lienzo</a>
+  <h1>Comprobante de propiedad</h1>
+  <p class="sub">Este link es tu prueba de que sos el dueño del bloque. No lo compartas salvo que quieras transferirle el bloque a otra persona.</p>
+
+  <div id="contenido"></div>
+</div>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+let r = params.get("r");
+let c = params.get("c");
+let t = params.get("t");
+
+const contenidoEl = document.getElementById("contenido");
+
+function letra(colIdx) { return String.fromCharCode(65 + Number(colIdx)); }
+function etiqueta(rowIdx, colIdx) { return `${letra(colIdx)}${Number(rowIdx) + 1}`; }
+function formatPrecio(cents, currency) {
+  return new Intl.NumberFormat("es-AR", { style: "currency", currency: currency || "ARS" }).format(cents / 100);
+}
+
+function renderLookupForm(mensaje) {
+  contenidoEl.innerHTML = "";
+  if (mensaje) {
+    const m = document.createElement("div");
+    m.className = "msg error";
+    m.style.marginBottom = "12px";
+    m.textContent = mensaje;
+    contenidoEl.appendChild(m);
+  }
+  const card = document.createElement("div");
+  card.className = "card lookup";
+  card.innerHTML = `
+    <p class="sub" style="margin-top:0">Pegá acá el link completo de tu comprobante (el que te llegó por email o viste después de pagar).</p>
+    <label for="lookup-url">Link del comprobante</label>
+    <input type="text" id="lookup-url" placeholder="https://.../certificado.html?r=..&c=..&t=.." />
+    <button class="btn-primary" id="lookup-btn">Ver comprobante</button>
+  `;
+  contenidoEl.appendChild(card);
+  document.getElementById("lookup-btn").addEventListener("click", () => {
+    const val = document.getElementById("lookup-url").value.trim();
+    try {
+      const u = new URL(val, window.location.href);
+      const nr = u.searchParams.get("r"), nc = u.searchParams.get("c"), nt = u.searchParams.get("t");
+      if (nr === null || nc === null || !nt) throw new Error("incompleto");
+      window.location.href = `certificado.html?r=${nr}&c=${nc}&t=${nt}`;
+    } catch {
+      renderLookupForm("Ese link no parece un comprobante válido.");
+    }
+  });
+}
+
+async function cargar() {
+  if (r === null || c === null || !t) {
+    renderLookupForm();
+    return;
+  }
+
+  contenidoEl.innerHTML = `<p class="sub">Cargando…</p>`;
+
+  try {
+    const res = await fetch(`/api/certificado?r=${encodeURIComponent(r)}&c=${encodeURIComponent(c)}&t=${encodeURIComponent(t)}`);
+    const data = await res.json();
+    if (!res.ok) {
+      renderLookupForm(data.error || "No se pudo cargar el comprobante.");
+      return;
+    }
+    renderCertificado(data);
+  } catch (err) {
+    renderLookupForm("No se pudo conectar. Probá de nuevo en un momento.");
+  }
+}
+
+function renderCertificado(block) {
+  contenidoEl.innerHTML = "";
+
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+    ${block.image_url ? `<img src="${block.image_url}" alt="${block.title || ''}" />` : ""}
+    <div class="row"><div class="k">Bloque</div><div class="v"><strong>${block.label}</strong></div></div>
+    <div class="row"><div class="k">Título</div><div class="v">${block.title || "—"}</div></div>
+    <div class="row"><div class="k">Link</div><div class="v">${block.link_url || "—"}</div></div>
+    <div class="row"><div class="k">Dueño actual</div><div class="v">${block.buyer_email || "—"}</div></div>
+    <div class="row"><div class="k">Precio pagado</div><div class="v">${formatPrecio(block.price_cents, block.currency)}</div></div>
+    <div class="row"><div class="k">Fecha de compra</div><div class="v">${block.sold_at ? new Date(block.sold_at).toLocaleDateString("es-AR") : "—"}</div></div>
+    <span class="badge">Comprobante válido — este link prueba la propiedad</span>
+  `;
+  contenidoEl.appendChild(card);
+
+  const transferCard = document.createElement("div");
+  transferCard.className = "card";
+  transferCard.innerHTML = `
+    <h2 style="margin-top:0; font-size:16px;">Vender o transferir este bloque</h2>
+    <p class="sub">Al transferir, tu link deja de funcionar y se genera uno nuevo para el nuevo dueño. Podés dejar el título y el link como están, o cambiarlos.</p>
+    <form id="form-transfer">
+      <div class="field">
+        <label for="new_email">Email del nuevo dueño</label>
+        <input type="email" id="new_email" required placeholder="nuevo-dueno@ejemplo.com" />
+      </div>
+      <div class="field">
+        <label for="new_title">Nuevo título (opcional, deja vacío para no cambiarlo)</label>
+        <input type="text" id="new_title" maxlength="60" placeholder="${block.title || ''}" />
+      </div>
+      <div class="field">
+        <label for="new_link_url">Nuevo link (opcional, deja vacío para no cambiarlo)</label>
+        <input type="url" id="new_link_url" placeholder="${block.link_url || ''}" />
+      </div>
+      <button type="submit" class="btn-primary" id="btn-transferir">Transferir bloque</button>
+      <div class="msg" id="transfer-msg"></div>
+    </form>
+  `;
+  contenidoEl.appendChild(transferCard);
+
+  const formEl = document.getElementById("form-transfer");
+  const msgEl = document.getElementById("transfer-msg");
+  const btnEl = document.getElementById("btn-transferir");
+
+  formEl.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    btnEl.disabled = true;
+    msgEl.className = "msg";
+    msgEl.textContent = "Transfiriendo…";
+
+    try {
+      const res = await fetch("/api/transferir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          row_idx: Number(r),
+          col_idx: Number(c),
+          manage_token: t,
+          new_email: document.getElementById("new_email").value.trim(),
+          new_title: document.getElementById("new_title").value.trim(),
+          new_link_url: document.getElementById("new_link_url").value.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "No se pudo transferir el bloque.");
+
+      msgEl.className = "msg ok";
+      msgEl.textContent = data.pendiente_de_aprobacion
+        ? "¡Listo! El bloque se transfirió. Como cambió el contenido, vuelve a quedar pendiente de revisión antes de publicarse."
+        : "¡Listo! El bloque se transfirió.";
+
+      // El link viejo (con el token anterior) deja de servir: recargamos
+      // con el token nuevo para que quien mira esta pantalla vea el estado
+      // actualizado del bloque ya a nombre del nuevo dueño.
+      t = data.manage_token;
+      window.history.replaceState({}, "", `certificado.html?r=${r}&c=${c}&t=${t}`);
+      setTimeout(cargar, 1200);
+    } catch (err) {
+      msgEl.className = "msg error";
+      msgEl.textContent = err.message || "Algo salió mal. Probá de nuevo.";
+      btnEl.disabled = false;
+    }
+  });
+}
+
+cargar();
+</script>
+</body>
+</html>
